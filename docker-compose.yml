@@ -1,0 +1,96 @@
+name: translation
+
+services:
+  api:
+    build:
+      context: .
+      target: runtime
+    env_file:
+      - .env
+    environment:
+      MODEL_ROOT: /models
+      HY_MT2_ENDPOINT: http://hy-mt2:8080
+      TRANSLATEGEMMA_ENDPOINT: http://translategemma:8080
+    volumes:
+      - ./models:/models:ro
+    networks:
+      backend:
+      edge:
+        aliases:
+          - translation-api
+    depends_on:
+      hy-mt2:
+        condition: service_started
+      translategemma:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  hy-mt2:
+    image: ghcr.io/ggml-org/llama.cpp@sha256:991cf50e9eb7dee4c18090849c7f909bafc5a1884cdde2dc3011df7407da09d6
+    command:
+      - --model
+      - /models/gguf/Hy-MT2-1.8B-Q4_K_M.gguf
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --threads
+      - "8"
+      - --ctx-size
+      - "2048"
+      - --parallel
+      - "1"
+      - --jinja
+    volumes:
+      - ./models:/models:ro
+    networks:
+      - backend
+    restart: unless-stopped
+
+  translategemma:
+    image: ghcr.io/ggml-org/llama.cpp@sha256:991cf50e9eb7dee4c18090849c7f909bafc5a1884cdde2dc3011df7407da09d6
+    command:
+      - --model
+      - /models/gguf/translategemma-4b-it.Q4_K_M.gguf
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --threads
+      - "8"
+      - --ctx-size
+      - "2048"
+      - --parallel
+      - "1"
+      - --no-jinja
+    volumes:
+      - ./models:/models:ro
+    networks:
+      - backend
+    restart: unless-stopped
+
+  model-preparer:
+    build:
+      context: .
+      target: runtime
+    command: ["python", "scripts/prepare_models.py"]
+    environment:
+      MODEL_ROOT: /models
+      MODEL_MANIFEST: /srv/translation/model-manifest.json
+    user: "1000:1000"
+    volumes:
+      - ./models:/models
+    profiles:
+      - tools
+
+networks:
+  backend:
+    internal: true
+  edge:
+    external: true
+    name: clocked-off-timesheets_default
