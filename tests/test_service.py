@@ -21,7 +21,7 @@ class FakeService:
             "request": request.model_dump(),
             "translation": "Привет",
             "model_used": {
-                "modelset": "opus_hplt",
+                "modelset": "translategemma_4b_q4",
                 "model_id": "test/model",
                 "revision": "abc123",
                 "quantization": "INT8",
@@ -101,3 +101,87 @@ def test_translategemma_prompt_uses_model_control_tokens_and_language_codes():
     assert "English (en) to Chinese (zh-CN) translator" in prompt
     assert "Hello there<end_of_turn>" in prompt
     assert prompt.endswith("<start_of_turn>model\n")
+
+
+def test_removed_models_are_rejected():
+    with TestClient(app) as client:
+        for model in ("hy_mt2_1_8b_q4", "opus_hplt"):
+            response = client.post('/api/v1/translate', headers=auth_header(), json={
+                'source': 'english', 'dest': 'russian', 'corpus': 'Hello', 'modelset': model,
+            })
+            assert response.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_default_routes_only_to_gemma():
+    from app.service import TranslationService
+    from app.domain import TranslationRequest, AdapterResult, ModelUsed
+    service = TranslationService()
+    calls = []
+    async def translate(*args):
+        calls.append(args)
+        return AdapterResult(translation='Привет', model_used=ModelUsed(
+            modelset=ModelSet.TRANSLATEGEMMA, model_id='gemma', revision='test', quantization='Q4'))
+    service._adapter.translate = translate
+    for model in (ModelSet.DEFAULT, ModelSet.TRANSLATEGEMMA):
+        result = await service.translate(TranslationRequest(source='english', dest='russian', corpus='Hello', modelset=model))
+        assert result.model_used.modelset == ModelSet.TRANSLATEGEMMA
+    assert len(calls) == 2
+
+
+@pytest.fixture
+def anyio_backend():
+    return 'asyncio'
+
+
+def test_cors_preflight_and_auth(monkeypatch):
+    import importlib
+    import app.main as main
+    monkeypatch.setenv('CORS_ALLOWED_ORIGINS', 'https://host.example')
+    importlib.reload(main)
+    try:
+        with TestClient(main.app) as client:
+            headers = {'Origin': 'https://host.example', 'Access-Control-Request-Method': 'POST',
+                       'Access-Control-Request-Headers': 'authorization,content-type'}
+            response = client.options('/api/v1/translate', headers=headers)
+            assert response.status_code == 200
+            assert response.headers['access-control-allow-origin'] == 'https://host.example'
+            response = client.post('/api/v1/translate', headers={'Origin': 'https://host.example'}, json={})
+            assert response.status_code == 401
+            assert response.headers['access-control-allow-origin'] == 'https://host.example'
+            headers['Origin'] = 'https://untrusted.example'
+            assert client.options('/api/v1/translate', headers=headers).status_code == 400
+    finally:
+        monkeypatch.delenv('CORS_ALLOWED_ORIGINS')
+        importlib.reload(main)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('body,expected', [
+    ({'content': 'Привет'}, None),
+    ({'content': 'partial', 'stopped_limit': True}, 'execution'),
+    ({'content': 'partial', 'truncated': True}, 'execution'),
+    ({'content': '  '}, 'execution'),
+    ({}, 'unavailable'),
+])
+async def test_gemma_worker_response(monkeypatch, body, expected):
+    import httpx
+    from app.adapters import TranslationExecutionError, ModelUnavailableError
+    from app.service import TranslationService
+    original_client = httpx.AsyncClient
+    def worker(request):
+        import json
+        assert request.url.path == '/completion'
+        assert 'English (en) to Russian (ru)' in json.loads(request.content)['prompt']
+        return httpx.Response(200, json=body)
+    monkeypatch.setattr(httpx, 'AsyncClient', lambda **kwargs: original_client(
+        transport=httpx.MockTransport(worker), **kwargs))
+    adapter = TranslationService()._adapter
+    if expected:
+        error = TranslationExecutionError if expected == 'execution' else ModelUnavailableError
+        with pytest.raises(error):
+            await adapter.translate('en-ru', Language.ENGLISH, Language.RUSSIAN, 'Hello')
+    else:
+        result = await adapter.translate('en-ru', Language.ENGLISH, Language.RUSSIAN, 'Hello')
+        assert result.translation == 'Привет'
+        assert result.model_used.modelset == ModelSet.TRANSLATEGEMMA

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
+
+from fastapi.middleware.cors import CORSMiddleware
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -71,3 +74,17 @@ async def unhandled_error(_: Request, __: Exception):
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+# Register last so preflight and error responses receive CORS headers.
+allowed_origins = [value.strip() for value in os.environ.get("CORS_ALLOWED_ORIGINS", "").split(",") if value.strip()]
+if "*" in allowed_origins:
+    raise ValueError("CORS_ALLOWED_ORIGINS must contain explicit origins")
+if allowed_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=allowed_origins,
+        allow_credentials=True,
+        allow_methods=["POST", "GET"],
+        allow_headers=["Authorization", "Content-Type"],
+    )

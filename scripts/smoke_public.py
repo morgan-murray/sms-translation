@@ -22,7 +22,7 @@ CASES = (
     ("korean", "english", "회의는 내일 아침 아홉 시에 시작합니다."),
 )
 
-MODELSETS = ("opus_hplt", "hy_mt2_1_8b_q4", "translategemma_4b_q4")
+MODELSETS = ("translategemma_4b_q4",)
 
 DESTINATION_PATTERN = {
     "english": re.compile(r"[A-Za-z]"),

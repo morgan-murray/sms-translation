@@ -14,8 +14,6 @@ class Language(str, Enum):
 
 class ModelSet(str, Enum):
     DEFAULT = "default"
-    OPUS_HPLT = "opus_hplt"
-    HY_MT2 = "hy_mt2_1_8b_q4"
     TRANSLATEGEMMA = "translategemma_4b_q4"
 
 

@@ -1,6 +1,3 @@
 fastapi>=0.116,<1
 httpx>=0.28,<1
-ctranslate2==4.8.1
-sentencepiece>=0.2,<1
-PyYAML>=6,<7
 uvicorn[standard]>=0.35,<1
